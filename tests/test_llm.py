@@ -125,10 +125,10 @@ def test_interpretation_only_when_rules_unsure_and_state_stays_source_of_truth()
     fake = FakeLLM([{"intent": "search", "dish": "rice", "include_ingredients": ["tomato"], "exclude_ingredients": ["peanut"],
                      "available_ingredients": [], "remove_exclusions": [], "max_steps": 6, "top_n": 3, "preference": None, "quick": True,
                      "stat": {}, "substitute": {}}])
-    # confident rule path -> zero LLM calls
-    handle_message("Find a penne pasta recipe", st, IDX, fake)
+    # deterministic commands (reset, restriction management, recipe lookups) never call the LLM
+    handle_message("reset", st, IDX, fake)
     assert fake.calls == 0
-    # rules find nothing ("zzz" words) -> one LLM interpretation, executed by deterministic search
+    # open-ended search requests are interpreted by the LLM first (meaning, not literal words); retrieval stays deterministic
     r = handle_message("zzzz qqqq something yummy", st, IDX, fake)
     assert fake.calls == 1 and "interpreted by AI" in r.text
     assert st.exclusions == ["peanut"] and r.blocks[0]["type"] == "recipes"

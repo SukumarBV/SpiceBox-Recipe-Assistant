@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from . import analytics, ingredient_matcher, llm as llm_mod, sub_reasoning, substitution
+from . import analytics, ingredient_matcher, llm as llm_mod, preferences as prefs_mod, sub_reasoning, substitution
 from .ingredient_normalizer import canonical_exclusion, describe_matcher, get_matcher, normalize_ingredient, singularize, split_quantity
 from .search import dish_tokens, search_recipes
 
@@ -142,6 +142,11 @@ def parse_preferences(low: str) -> dict:
     return p
 
 
+# Phrases that look like nutrition words but are handled as transparent ingredient-evidence preferences.
+_PREF_OK = re.compile(r"\b(high[- ]protein|protein[- ](?:rich|packed)|lots of protein|more protein|low[- ]carb)\b", re.I)
+MORE_RE = re.compile(r"^\s*(?:show\s+(?:me\s+)?)?(?:some\s+)?(?:more|other|different|next)(?:\s+(?:options|results|recipes|ideas|ones|suggestions))?\s*[.!?]*\s*$|^\s*(?:anything|something)\s+else\s*[.!?]*\s*$", re.I)
+FOLLOWUP_CUE = re.compile(r"\b(make\s+(?:it|them|that|this)|instead|but|same|those|these|them|too|also|again|rather|actually|now|lighter|spicier|milder|quicker|faster|healthier|heartier|easier|more\s+\w+|less\s+\w+)\b", re.I)
+
 UNSUP_RE = re.compile(r"\b(calories?|kcal|nutrition\w*|protein|carbs?|carbohydrates?|sodium|cholesterol|vitamins?|(?:prep(?:aration)?|cook(?:ing)?|total) time|how long|ready in|\d+\s*(?:minutes?|mins?|hours?)|servings?|serves|per serving|price|cost|cheap|budget|rating|rated|difficulty)\b", re.I)
 QUICK_RE = re.compile(r"\b(quick|fast|easy|simple|speedy|weeknight)\b", re.I)
 
@@ -253,6 +258,7 @@ def _handle_rules(text, state, index, llm=None) -> Response:
     r = _manage_restrictions(text, low, state)
     if r:
         return r
+    low = _PREF_OK.sub(" ", low)
     unsup = UNSUP_RE.search(low)
     if unsup and not AVAIL_RE.search(text):
         residual = [t for t in dish_tokens(UNSUP_RE.sub(" ", strip_exclusions(text))) if t not in {"under", "over", "than", "less", "more", "high", "low", "tell", "number", "which", "fewest", "most", "least", "lowest", "highest", "fewer", "healthiest", "healthy", "what", "how", "much", "many"}]
@@ -268,6 +274,8 @@ def _handle_rules(text, state, index, llm=None) -> Response:
 
 def _route(text, low, state, index, llm):
     has_ref = bool(ID_RE.search(low) or REF_NUM.search(text) or REF_ORD.search(low) or re.search(r"\b(this|that|it)\b", low))
+    if state.intent == "search" and MORE_RE.match(text):
+        return _more_results(state, index)
     if AVAIL_RE.search(text):
         return _do_match(text, low, state, index, new_list=True)
     if state.intent == "match" and REMOVE_AV_RE.search(text):
@@ -293,6 +301,12 @@ def _route(text, low, state, index, llm):
             return _do_match(text, low, state, index, new_list=False)
     if state.intent == "substitution" and state.last_substitution and extract_exclusions(text):
         return _redo_substitution(text, state, index, llm)
+    # Open-ended requests ("something spicy", "light meal for a hot summer") go to the LLM interpreter FIRST so the
+    # meaning, not the literal words, drives retrieval. Deterministic lexicon below is the offline fallback.
+    if llm is not None and llm.available:
+        r = _try_llm(text, state, index, llm)
+        if r:
+            return r
     return _do_search(text, low, state, index)
 
 
@@ -340,9 +354,21 @@ def _ingredient_phrase_terms(text):
     return out
 
 
+def _prev_criteria(state):
+    if state.intent != "search":
+        return None
+    return prefs_mod.Criteria.from_dict(state.filters.get("criteria"))
+
+
 def _do_search(text, low, state, index):
     new_ex = extract_exclusions(text)
-    base = UNSUP_RE.sub(" ", strip_exclusions(text))
+    stripped = strip_exclusions(text)
+    # Offline understanding of descriptive words (used when Gemini is off or declined).
+    pc, diets, stripped = prefs_mod.parse_request(stripped)
+    for d in diets:
+        if d not in new_ex:
+            new_ex.append(d)
+    base = UNSUP_RE.sub(" ", stripped)
     ing_terms = _ingredient_phrase_terms(base)
     base_wo = re.sub(r"\b(?:with|containing|contains|that\s+contain|that\s+uses?|using|made\s+with|includes?|including)\s+[^.;!?]+", " ", base, flags=re.I)
     toks = [t for t in dish_tokens(base_wo) if t not in {"now", "actually", "only", "too", "cannot", "can", "not", "t", "cant", "eat", "tolerate"}]
@@ -350,38 +376,80 @@ def _do_search(text, low, state, index):
     top_n = parse_top_n(text) or 5
     ms = parse_max_steps(text)
     quick = bool(QUICK_RE.search(text))
+    crit = pc if pc.has_signals() else None
+    prev_c = _prev_criteria(state)
+    prev_has = state.intent == "search" and bool(state.filters.get("dish_tokens") or state.filters.get("ingredient_terms") or (prev_c and prev_c.has_signals()))
     if not toks and not ing_terms:
-        if state.intent == "search" and (state.filters["dish_tokens"] or state.filters["ingredient_terms"]) and (added or ms is not None):
-            toks, ing_terms = state.filters["dish_tokens"], state.filters["ingredient_terms"]
-        elif added:
-            return Response(f"Noted hard restriction(s): {', '.join(added)}. Tell me what to search for, list ingredients you have, or name a recipe to adapt.")
-        else:
+        if prev_has and ((crit is None and (added or ms is not None)) or (crit is not None and FOLLOWUP_CUE.search(text))):
+            toks, ing_terms = state.filters.get("dish_tokens", []), state.filters.get("ingredient_terms", [])
+            crit = prefs_mod.merge_criteria(prev_c, pc) if prev_c else crit
+        elif crit is None:
+            if added:
+                return Response(f"Noted hard restriction(s): {', '.join(added)}. Tell me what to search for, list ingredients you have, or name a recipe to adapt.")
             return Response("I couldn't tell what to look for. " + HELP, confident=False)
-    return _run_search(state, index, toks, ing_terms, added, top_n, quick, ms)
+    if crit is not None:
+        crit = prefs_mod.verify_hints(index, crit)
+        if quick and "quick" not in crit.tags:
+            crit.tags.append("quick")
+            crit.quick = True
+    return _run_search(state, index, toks, ing_terms, added, top_n, quick, ms, criteria=crit)
 
 
-def _run_search(state, index, toks, ing_terms, added, top_n=5, quick=False, max_steps=None):
+_SCOPE_LABELS = {"title": "title", "title_or_ingredients": "title or ingredient list (no title matched all words)",
+                 "ingredients": "ingredient list", "preferences": "preference evidence in titles and ingredient lists"}
+
+
+def _run_search(state, index, toks, ing_terms, added, top_n=5, quick=False, max_steps=None, criteria=None, offset=0):
     if max_steps is None and state.intent == "search":
         max_steps = state.filters.get("max_steps")
+    crit = criteria if (criteria is not None and criteria.has_signals()) else None
     state.intent = "search"
-    state.filters = {"dish_tokens": toks, "ingredient_terms": ing_terms, "max_steps": max_steps}
-    res = search_recipes(index, toks, ing_terms, state.exclusions, limit=top_n, max_steps=max_steps, prefer_short=quick)
+    state.filters = {"dish_tokens": toks, "ingredient_terms": ing_terms, "max_steps": max_steps,
+                     "criteria": crit.to_dict() if crit else None, "offset": offset, "top_n": top_n, "quick": quick}
+    res = search_recipes(index, toks, ing_terms, state.exclusions, limit=top_n, max_steps=max_steps, prefer_short=quick,
+                         criteria=crit, offset=offset)
     state.last_result_ids = [i["id"] for i in res["items"]]
     state.active_recipe_id = res["items"][0]["id"] if len(res["items"]) == 1 else None
     desc = " ".join(toks) + (f" containing {', '.join(ing_terms)}" if ing_terms else "") + (f" (≤{max_steps} steps)" if max_steps is not None else "")
+    if crit:
+        d2 = crit.describe()
+        desc = (desc.strip() + " · " if desc.strip() else "") + d2
     note = f" (added restriction: {', '.join(added)})" if added else ""
     if not res["items"]:
         why = ""
         if res["total_before_exclusions"] and state.exclusions:
             why = f" {res['total_before_exclusions']} recipe(s) matched before restrictions, but all violate: {_restr_text(state)}."
+        if offset:
+            return Response("That was the last of the matching recipes for this search. Ask for something different or loosen a filter.", [], confident=False)
         return Response(f"No recipes found for “{desc.strip()}” with active restrictions [{_restr_text(state)}].{why} "
                         "Nothing was relaxed silently — say *clear restrictions* or change the search to continue.", [], confident=False)
-    scope = {"title": "title", "title_or_ingredients": "title or ingredient list (no title matched all words)", "ingredients": "ingredient list"}[res["scope"]]
-    txt = (f"Found **{res['total']}** matching recipe(s) for “{desc.strip()}” (matched on {scope}); showing {len(res['items'])}{note}"
-           f"{', fewest steps first' if quick else ''}. Active restrictions: {_restr_text(state)}.")
+    scope = _SCOPE_LABELS.get(res["scope"], "preference evidence combined with title/ingredient matching")
+    count = f"**{res['total']}**" if res.get("total_exact", True) else f"roughly **{res['total']:,}** candidate"
+    shown = f"showing {offset + 1}–{offset + len(res['items'])}" if offset else f"showing {len(res['items'])}"
+    txt = (f"Found {count} matching recipe(s) for “{desc.strip()}” (matched on {scope}); {shown}{note}"
+           f"{', fewest steps first' if quick and not crit else ''}. Active restrictions: {_restr_text(state)}.")
     if res["excluded_count"]:
         txt += f" {res['excluded_count']} otherwise-matching recipe(s) were removed by your restrictions."
+    if crit:
+        txt += (" Ranked by evidence found in each recipe's **title and ingredient list** — the database has no flavour, cuisine, meal-type, "
+                "nutrition or cooking-time labels, so these are transparent heuristics, not verified labels.")
+        if crit.quick or "quick" in crit.tags:
+            txt += " “Quick” = fewer instruction steps (no cooking times are stored)."
+        if crit.cuisine and crit.cuisine not in prefs_mod.CUISINES:
+            txt += f" No built-in cuisine heuristic exists for “{crit.cuisine}”, so it was not used as a filter."
+        if crit.evidence_terms or crit.title_keywords:
+            txt += " AI-suggested keywords used (all verified to exist in the database): " + ", ".join(crit.title_keywords + crit.evidence_terms) + "."
+        if res.get("relaxed"):
+            txt += " ⚠️ Relaxed because too few matched: " + "; ".join(res["relaxed"]) + "."
     return Response(txt, [{"type": "recipes", "items": res["items"], "title": "Search results"}])
+
+
+def _more_results(state, index):
+    f = state.filters
+    c = prefs_mod.Criteria.from_dict(f.get("criteria")) if f.get("criteria") else None
+    n = f.get("top_n") or state.preferences.get("top_n", 5)
+    return _run_search(state, index, f.get("dish_tokens", []), f.get("ingredient_terms", []), [], n, f.get("quick", False),
+                       f.get("max_steps"), criteria=c, offset=(f.get("offset") or 0) + n)
 
 
 # ------------------------------------------------------------------ details
@@ -572,61 +640,223 @@ def _scope_from(index, toks, ing_terms, exclusions):
 
 
 def _execute_command(cmd, state, index, llm):
-    """Run an AI-interpreted, schema-validated command through the same deterministic code paths."""
+    """Execute a schema-validated command interpreted by the LLM.
+
+    The LLM interprets natural language; recipe retrieval, ingredient
+    matching, restrictions and analytics remain deterministic and local.
+    """
+    if not isinstance(cmd, dict):
+        return None
+
     p = state.preferences
-    added = _add_exclusions(state, [c for c in (canonical_exclusion(e) for e in cmd["exclude"]) if c])
-    rem = [canonical_exclusion(e) for e in cmd["remove_exclusions"]]
-    state.exclusions = [e for e in state.exclusions if e not in rem]
-    if cmd["max_steps"] is not None:
-        p["max_steps"] = cmd["max_steps"]
-    if cmd["top_n"]:
-        p["top_n"] = max(1, min(20, cmd["top_n"]))
-    pref = cmd["preference"]
-    if pref == "fewer_steps":
+
+    # Update hard exclusions and remove any exclusions the user cleared.
+    exclude_items = list(cmd.get("exclude") or [])
+    for item in cmd.get("preferences") or []:
+        if isinstance(item, str) and item.strip().lower() in ("vegetarian", "vegan"):
+            exclude_items.append(item.strip().lower())
+    remove_items = cmd.get("remove_exclusions") or []
+
+    added = _add_exclusions(
+        state,
+        [
+            canonical
+            for canonical in (
+                canonical_exclusion(item)
+                for item in exclude_items
+                if isinstance(item, str)
+            )
+            if canonical
+        ],
+    )
+    removed = [
+        canonical_exclusion(item)
+        for item in remove_items
+        if isinstance(item, str)
+    ]
+    state.exclusions = [item for item in state.exclusions if item not in removed]
+
+    # Persist conversational preferences when supplied.
+    max_steps = cmd.get("max_steps")
+    if max_steps is not None:
+        try:
+            p["max_steps"] = max(1, min(100, int(max_steps)))
+        except (TypeError, ValueError):
+            pass
+
+    top_n = cmd.get("top_n")
+    if top_n:
+        try:
+            p["top_n"] = max(1, min(20, int(top_n)))
+        except (TypeError, ValueError):
+            pass
+
+    preference = cmd.get("preference")
+    if preference == "fewer_steps":
         p["prefer_fewer_steps"] = True
-    elif pref:
-        p["goal"] = pref
-    intent = cmd["intent"]
-    toks = dish_tokens(cmd["dish"] or "")
-    ing = [n for n in (normalize_ingredient(x) for x in cmd["include"]) if n]
+        p["goal"] = "quick"
+    elif preference:
+        p["goal"] = preference
+
+    cuisine = cmd.get("cuisine")
+    meal_type = cmd.get("meal_type")
+    food_preferences = cmd.get("preferences") or []
+
+    if cuisine:
+        p["cuisine"] = str(cuisine).strip().lower()
+    if meal_type:
+        p["meal_type"] = str(meal_type).strip().lower()
+    if isinstance(food_preferences, list):
+        existing = p.get("food_preferences", [])
+        if not isinstance(existing, list):
+            existing = []
+        p["food_preferences"] = list(
+            dict.fromkeys(
+                existing
+                + [str(item).strip().lower() for item in food_preferences if item]
+            )
+        )
+
+    intent = cmd.get("intent")
+    dish = cmd.get("dish") or ""
+    toks = dish_tokens(dish)
+
+    include_items = cmd.get("include") or []
+    ing = [
+        normalized
+        for normalized in (
+            normalize_ingredient(item)
+            for item in include_items
+            if isinstance(item, str)
+        )
+        if normalized
+    ]
+    quick = bool(cmd.get("quick", False))
+
     if intent == "restrictions":
         return Response(f"Updated restrictions. Active: {_restr_text(state)}.")
+
     if intent == "search":
-        if not toks and not ing:
+        prev_c = _prev_criteria(state)
+        prev_filters = dict(state.filters) if state.intent == "search" else {}
+        crit = prefs_mod.Criteria.from_dict({
+            "tags": list(cmd.get("tags") or []) + list(cmd.get("preferences") or []),
+            "cuisine": cuisine, "meal_type": meal_type,
+            "evidence_terms": cmd.get("evidence_terms") or [], "title_keywords": cmd.get("title_keywords") or [],
+            "avoid_terms": cmd.get("avoid_terms") or [], "quick": quick})
+        crit = prefs_mod.verify_hints(index, crit)
+        offset = 0
+        n = p.get("top_n", 5)
+        if cmd.get("followup") and prev_filters:
+            # Conversational follow-up: keep the earlier search and apply only what changed.
+            if not toks and not ing:
+                toks, ing = prev_filters.get("dish_tokens", []), prev_filters.get("ingredient_terms", [])
+            crit = prefs_mod.merge_criteria(prev_c, crit, cmd.get("drop_preferences") or [])
+            if max_steps is None:
+                max_steps = prev_filters.get("max_steps")
+            if cmd.get("more"):
+                offset = (prev_filters.get("offset") or 0) + (prev_filters.get("top_n") or n)
+                n = prev_filters.get("top_n") or n
+        if not toks and not ing and not crit.has_signals():
             return None
-        return _run_search(state, index, toks, ing, added, p["top_n"] if cmd["top_n"] else 5, cmd["quick"], cmd["max_steps"])
+
+        # Cuisine and meal type are NOT verified database columns: they are applied as transparent
+        # title/ingredient heuristics (see core/preferences.py) and reported as such in the reply.
+        return _run_search(state, index, toks, ing, added, n, quick, max_steps, criteria=crit, offset=offset)
+
     if intent == "match":
-        items = [it for it in (ingredient_matcher.parse_item(x) for x in cmd["available"]) if it]
-        if items:
-            state.available = items
-        for e in state.exclusions:
-            m = get_matcher(e)
-            state.available = [a for a in state.available if not m.search(a["name"])]
-        return _run_match(state, index, ["interpreted by AI"] if items else [])
+        available_items = cmd.get("available") or []
+        parsed_items = [
+            item
+            for item in (
+                ingredient_matcher.parse_item(value)
+                for value in available_items
+                if isinstance(value, str)
+            )
+            if item
+        ]
+        if parsed_items:
+            state.available = parsed_items
+
+        for exclusion in state.exclusions:
+            matcher = get_matcher(exclusion)
+            state.available = [
+                item
+                for item in state.available
+                if not matcher.search(item["name"])
+            ]
+
+        note = ["Interpreted by AI"] if parsed_items else []
+        return _run_match(state, index, note)
+
     if intent == "stats":
-        st_ = cmd["stat"]
-        terms = [n for n in (normalize_ingredient(x) for x in st_["ingredients"]) if n]
-        if st_["type"] == "count" and terms:
-            scope, filters = _scope_from(index, toks, [], state.exclusions if added else [])
-            res = analytics.count_containing(index, terms, scope, filters or None)
-            state.last_stat = {"description": "Recipes containing " + " and ".join(terms), "count": res["count"], "total": res["whole_dataset_size"]}
-            return Response(f"**{res['count']}** of **{res['denominator']}** recipes analysed contain {' and '.join(terms)} = **{res['percentage']}%**.", [{"type": "stats", "result": res}])
+        stat = cmd.get("stat") or {}
+        stat_type = stat.get("type")
+        stat_ingredients = stat.get("ingredients") or []
+        terms = [
+            normalized
+            for normalized in (
+                normalize_ingredient(item)
+                for item in stat_ingredients
+                if isinstance(item, str)
+            )
+            if normalized
+        ]
+
+        if stat_type == "count" and terms:
+            scope, filters = _scope_from(
+                index,
+                toks,
+                [],
+                state.exclusions if added else [],
+            )
+            result = analytics.count_containing(index, terms, scope, filters or None)
+            state.last_stat = {
+                "description": "Recipes containing " + " and ".join(terms),
+                "count": result["count"],
+                "total": result["whole_dataset_size"],
+            }
+            return Response(
+                f"**{result['count']}** of **{result['denominator']}** recipes analysed "
+                f"contain {' and '.join(terms)} = **{result['percentage']}%**.",
+                [{"type": "stats", "result": result}],
+            )
+
         scope, filters = _scope_from(index, toks, ing + terms, [])
-        if st_["type"] == "top_ingredients":
-            res = analytics.top_ingredients(index, scope, cmd["top_n"] or 10, filters or None)
-        elif st_["type"] == "avg_ingredients":
-            res = analytics.ingredient_count_stats(index, scope, filters or None)
-        elif st_["type"] == "rank_steps":
-            res = analytics.rank_by_steps(index, scope, cmd["top_n"] or 5, st_["order"] == "fewest", filters or None)
+        if stat_type == "top_ingredients":
+            result = analytics.top_ingredients(
+                index, scope, top_n or 10, filters or None
+            )
+        elif stat_type == "avg_ingredients":
+            result = analytics.ingredient_count_stats(index, scope, filters or None)
+        elif stat_type == "rank_steps":
+            result = analytics.rank_by_steps(
+                index,
+                scope,
+                top_n or 5,
+                stat.get("order") == "fewest",
+                filters or None,
+            )
         else:
             return None
-        return Response(f"Computed over {res['n_analyzed']} recipes in scope.", [{"type": "stats", "result": res}])
+
+        state.last_stat = {"type": stat_type, "result": result}
+        return Response(
+            f"Computed over {result['n_analyzed']} recipes in scope.",
+            [{"type": "stats", "result": result}],
+        )
+
     if intent == "substitute":
-        sub = cmd["substitute"]
-        if not sub["ingredient"]:
+        substitute_data = cmd.get("substitute") or {}
+        ingredient = substitute_data.get("ingredient")
+        recipe = substitute_data.get("recipe")
+        if not ingredient:
             return None
-        t = f"Replace {sub['ingredient']}" + (f" in the {sub['recipe']} recipe" if sub["recipe"] else "")
-        return _do_substitution(t, t.lower(), state, index, llm)
+        text = f"Replace {ingredient}"
+        if recipe:
+            text += f" in the {recipe} recipe"
+        return _do_substitution(text, text.lower(), state, index, llm)
+
     return None
 
 

@@ -144,7 +144,9 @@ _FISH = ["fish", "salmon", "tuna", "cod", "tilapia", "halibut", "trout", "anchov
          "bass", "catfish", "swordfish", "fish sauce"]
 _SOY = ["soy", "soya", "tofu", "tempeh", "edamame", "miso", "tamari", "shoyu", "soy sauce"]
 _PORK = ["pork", "bacon", "ham", "prosciutto", "pancetta", "lard", "chorizo", "pepperoni", "salami", "sausage"]
-_MEAT = _PORK + ["chicken", "beef", "turkey", "lamb", "veal", "steak", "venison", "duck", "goose", "brisket", "hamburger",
+_CUTS = ["chuck", "sirloin", "tenderloin", "ribeye", "rib eye", "short rib", "oxtail", "mutton", "goat", "rabbit", "quail",
+         "pheasant", "bison", "meat", "roast beef", "pot roast"]
+_MEAT = _PORK + _CUTS + ["chicken", "beef", "turkey", "lamb", "veal", "steak", "venison", "duck", "goose", "brisket", "hamburger",
                  "meatball", "hot dog", "gelatin", "gelatine"]
 
 GROUPS: dict[str, dict] = {

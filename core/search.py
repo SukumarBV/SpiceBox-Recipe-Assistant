@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from .ingredient_normalizer import get_matcher, singularize
+from . import preferences as prefs_mod
 
 
 # Words that should not be treated as recipe or ingredient search terms.
@@ -69,7 +70,9 @@ def search_recipes(
     exclusions=(),
     limit=5,
     max_steps=None,
-    prefer_short=False
+    prefer_short=False,
+    criteria=None,
+    offset=0
 ) -> dict:
 
     tokens = list(tokens)
@@ -84,8 +87,13 @@ def search_recipes(
         "scope": "title",
         "dish_tokens": tokens,
         "ingredient_terms": list(ingredient_terms),
-        "exclusions": [m.label for m in matchers]
+        "exclusions": [m.label for m in matchers],
+        "relaxed": [],
+        "total_exact": True,
+        "criteria": criteria.to_dict() if criteria is not None else None
     }
+
+    prefs = criteria if (criteria is not None and criteria.has_signals()) else None
 
     # Apply ingredient filters.
     pool = None
@@ -94,8 +102,11 @@ def search_recipes(
         matches = index.contains(term)
         pool = matches if pool is None else (pool & matches)
 
-    if not tokens and pool is None:
+    if not tokens and pool is None and prefs is None:
         return result
+
+    if prefs is not None and not tokens and pool is None:
+        return _preference_only(index, result, prefs, matchers, limit, offset, max_steps)
 
     scan = sorted(pool) if pool is not None else range(len(index))
 
@@ -128,6 +139,18 @@ def search_recipes(
     else:
         candidates = list(scan)
         result["scope"] = "ingredients"
+
+    # Descriptive preferences (spicy, light, cuisine, meal type ...) re-rank and filter the base matches.
+    if prefs is not None:
+        result["scope"] = "preferences+" + result["scope"]
+        base = set(candidates)
+        res = prefs_mod.retrieve(index, prefs, matchers, max_steps, base=base, need=limit + offset)
+        result["total_before_exclusions"] = res["pool_size"]
+        result["total"] = len(res["order"]) if res["exact"] else res["pool_size"]
+        result["excluded_count"] = res["excluded"] or 0
+        result["total_exact"] = res["exact"]
+        result["relaxed"] = res["relaxed"]
+        return _emit(index, result, res["order"][offset:offset + limit], matchers, prefs, res["scores"])
 
     # Apply maximum cooking-step restriction.
     if max_steps is not None:
@@ -175,8 +198,24 @@ def search_recipes(
         )
 
     # Return matching recipes.
-    for i in candidates[:limit]:
-        result["items"].append({
+    return _emit(index, result, candidates[offset:offset + limit], matchers, None, None)
+
+
+def _preference_only(index, result, prefs, matchers, limit, offset, max_steps):
+    """No dish name or ingredient: retrieve purely from descriptive preferences (Gemini/lexicon criteria)."""
+    result["scope"] = "preferences"
+    res = prefs_mod.retrieve(index, prefs, matchers, max_steps, base=None, need=limit + offset)
+    result["total_before_exclusions"] = res["pool_size"]
+    result["total"] = len(res["order"]) if res["exact"] else res["pool_size"]
+    result["excluded_count"] = res["excluded"] or 0
+    result["total_exact"] = res["exact"]
+    result["relaxed"] = res["relaxed"]
+    return _emit(index, result, res["order"][offset:offset + limit], matchers, prefs, res["scores"])
+
+
+def _emit(index, result, idxs, matchers, prefs, scores):
+    for i in idxs:
+        item = {
             "id": index.ids[i],
             "title": index.titles[i],
             "steps": index.steps[i],
@@ -186,6 +225,10 @@ def search_recipes(
                 + ", ".join(m.label for m in matchers)
                 + " — none found (text-based check)"
             ) if matchers else None
-        })
-
+        }
+        if prefs is not None:
+            item["why"] = prefs_mod.explain(index, i, prefs)
+            if scores is not None and i in scores:
+                item["pref_score"] = round(scores[i], 2)
+        result["items"].append(item)
     return result

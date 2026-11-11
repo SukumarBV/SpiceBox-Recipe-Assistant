@@ -29,8 +29,16 @@ streamlit run app.py
 Copy `.env.example` to `.env` (or set environment variables / Streamlit secrets):
 - Gemini via Google AI Studio: `GEMINI_API_KEY=...` (check AI Studio for the model currently free; set `LLM_MODEL`).
 - Or any OpenAI-compatible endpoint: `LLM_PROVIDER=openai_compatible`, `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`.
-- `LLM_MODE=assist` (default; AI only when rules are unsure) or `always`.
+- `LLM_MODE=assist` (default; AI interprets every open-ended search/recommendation request and anything the rules are unsure about) or `always` (AI interprets every message first).
 The header shows AI on/off. Rate limits pause the AI for 60 s and the app continues deterministically. Keys are never stored in code. Not verified against a live key in this build (no key was available) — the client is tested with a fake transport.
+
+## Natural-language pipeline (Gemini → criteria → database → ranking)
+`User message → Gemini interpretation (core/llm.py) → structured criteria (core/preferences.py `Criteria`) → SQLite-derived index retrieval (core/search.py) → preference-based ranking → recipes`.
+- Gemini only returns JSON: intent, dish, ingredients, restrictions, cuisine, meal type, descriptive **tags** (spicy, mild, light, refreshing, filling, quick, healthy, comfort, high_protein, low_carb), optional ingredient/title keyword hints and follow-up flags. It never supplies recipes, ingredients or nutrition.
+- Hints suggested by Gemini are kept only if they really occur in the database.
+- Ranking uses evidence in each recipe's **title and ingredient list** (e.g. *spicy* → chilli/jalapeno/cayenne/chipotle…; *light summer meal* → salads, cucumber, tomato, mint, minus cream/bacon/casserole titles; *filling* → substantial proteins/starches/stews; *quick* → fewer instruction steps). Every card shows the evidence found (🔎).
+- The database has **no** cuisine / meal-type / flavour / health / time labels. Cuisine and meal type are transparent **heuristics** (signature title words and ingredients) and are labelled as such. Hard preferences are relaxed only when nothing matches, and the reply says what was relaxed.
+- Follow-ups ("make it vegetarian", "something lighter", "show me more") refine the previous search. Without an API key a smaller built-in lexicon provides the same behaviour for common phrases.
 
 ## Tests and evaluation
 ```
@@ -57,7 +65,7 @@ Steps: `git init`, `git add .`, `git commit`, create a GitHub repo, `git push`; 
 - *Field mapping error*: create `data\field_mapping.json` as the message says.
 
 ## Limitations
-Rule-based language understanding without a key; step counts depend on source line breaks; restriction checks are text-based; no photos/nutrition/times in the dataset; quantity sufficiency unverified; substitution effects are predictions; keyword (not semantic) retrieval; real-data performance and AI behaviour unverified here.
+Rule-based language understanding without a key; step counts depend on source line breaks; restriction checks are text-based; no photos/nutrition/times in the dataset; quantity sufficiency unverified; substitution effects are predictions; cuisine/meal/flavour/health understanding is heuristic (title + ingredient evidence); real-data performance and AI behaviour unverified here.
 
 ## Data attribution / AI disclosure
 Dataset: Recipe Box (Ryan Lee, eightportions.com); verify its terms before redistributing. *Disclosure template:* "I used Claude to generate and iterate on the code from the assignment; I reviewed and tested it and can explain every component. [Add what you changed.]"

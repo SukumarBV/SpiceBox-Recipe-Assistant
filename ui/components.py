@@ -55,6 +55,8 @@ def recipe_card(index, item):
     with st.container(border=True):
         meta = [f"{item['ingredient_lines']} ingredient lines", f"{item['steps'] or 'unknown'} steps"]
         st.markdown(card_head(item["title"], item["id"], meta), unsafe_allow_html=True)
+        for reason in item.get("why") or []:
+            st.markdown(f'<div class="note">🔎 {e(reason)}</div>', unsafe_allow_html=True)
         if item.get("restriction_check"):
             st.markdown(f'<div class="note">✓ {e(item["restriction_check"])}</div>', unsafe_allow_html=True)
         with st.expander("Original ingredients & instructions"):
