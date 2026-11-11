@@ -1,0 +1,57 @@
+
+# ==========================================
+# PYTHON ENVIRONMENTS
+# ==========================================
+venv/
+.venv/
+env/
+ENV/
+
+# ==========================================
+# PYTHON CACHE
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ==========================================
+# ENVIRONMENT VARIABLES & SECRETS
+# ==========================================
+.env
+.env.*
+!.env.example
+
+.streamlit/secrets.toml
+
+# ==========================================
+# DATASETS & DATABASES
+# ==========================================
+data/raw/*.json
+data/processed/*.db
+data/processed/*.sqlite
+data/processed/*.sqlite3
+data/processed/*.gz
+data/processed/ingestion_report.json
+
+# ==========================================
+# TEMPORARY FILES
+# ==========================================
+*.tmp
+*.download
+*.unpacked
+.DS_Store
+Thumbs.db
+
+# ==========================================
+# EDITORS
+# ==========================================
+.vscode/
+.idea/
+
+# ==========================================
+# LOGS
+# ==========================================
+*.log

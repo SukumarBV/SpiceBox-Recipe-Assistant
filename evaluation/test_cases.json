@@ -1,0 +1,102 @@
+{
+  "note": "Conversations only. Expected values are NOT pre-filled: run `python scripts/run_evaluation.py` against the REAL database to generate actual results. 'checks' are invariants, not fabricated counts.",
+  "cases": [
+    {
+      "id": "E1",
+      "task": "1",
+      "title": "Multi-turn search: penne pasta, then exclude dairy",
+      "turns": [
+        "Find a penne pasta recipe",
+        "I cannot have dairy"
+      ],
+      "checks": [
+        "turn2_keeps_search_filters",
+        "no_result_violates_exclusions"
+      ]
+    },
+    {
+      "id": "E2",
+      "task": "1",
+      "title": "Aggregate: garlic AND onion count with percentage and denominator",
+      "turns": [
+        "How many recipes contain both garlic and onion? What percentage of the dataset is that?"
+      ],
+      "checks": [
+        "stats_reports_denominator_and_normalization"
+      ]
+    },
+    {
+      "id": "E3",
+      "task": "2",
+      "title": "Match eggs/onions/tomatoes/rice, no peanuts, max 6 steps, many ingredients + few extras; then exclude eggs",
+      "turns": [
+        "I have eggs, onions, tomatoes and rice. Exclude peanuts. Maximum six steps. Use as many of my ingredients as possible and prefer the fewest additional ingredients.",
+        "Exclude eggs too"
+      ],
+      "checks": [
+        "no_result_violates_exclusions",
+        "max_steps_respected",
+        "ranking_prefers_more_ingredients",
+        "score_reproducible"
+      ]
+    },
+    {
+      "id": "E4",
+      "task": "2",
+      "title": "No-match: impossible step limit (0 steps) must not be silently relaxed",
+      "turns": [
+        "I have rice and eggs. At most 0 instruction steps."
+      ],
+      "checks": [
+        "no_eligible_and_alternatives_labelled"
+      ]
+    },
+    {
+      "id": "E5",
+      "task": "3",
+      "title": "Substitution with likely weak/conflicting evidence (egg in a souffle)",
+      "turns": [
+        "Remove eggs from the cheese souffle recipe."
+      ],
+      "checks": [
+        "uncertainty_labelled",
+        "cited_ids_exist"
+      ]
+    },
+    {
+      "id": "E6",
+      "task": "3",
+      "title": "Substitution with local evidence: cream, dairy-free",
+      "turns": [
+        "Find a penne pasta recipe",
+        "Replace cream in this pasta recipe without dairy"
+      ],
+      "checks": [
+        "cited_ids_exist",
+        "no_result_violates_exclusions_in_revision"
+      ]
+    },
+    {
+      "id": "E7",
+      "task": "1",
+      "title": "Unsupported attribute is refused, not invented",
+      "turns": [
+        "Which recipe has the fewest calories?"
+      ],
+      "checks": [
+        "refuses_unavailable"
+      ]
+    },
+    {
+      "id": "E8",
+      "task": "1",
+      "title": "One-shot LLM vs this system (constructed comparison, see report)",
+      "turns": [
+        "How many recipes contain both garlic and onion?"
+      ],
+      "checks": [
+        "stats_reports_denominator_and_normalization"
+      ]
+    }
+  ]
+}

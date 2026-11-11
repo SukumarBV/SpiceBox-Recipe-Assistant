@@ -1,0 +1,2 @@
+# Runtime: Streamlit only. The app code never imports pandas (see docs/architecture.md, "Windows DLL fix").
+streamlit>=1.40
