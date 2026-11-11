@@ -1,71 +1,217 @@
-# SpiceBox — AI Recipe Assistant
+# 🍲 SpiceBox – AI Recipe Assistant
 
-Turn what you have into something delicious. A Streamlit website that searches, analyses, matches and adapts recipes from the Recipe Box dataset (GenAI Intern Assignment). **Hybrid AI: an optional LLM understands and reasons; Python + SQLite retrieve, calculate and verify.** Works fully without any API key.
+**Turn what you have into something delicious!**
 
-> Status: built and unit/UI-tested on a **synthetic fixture**. Dataset-dependent runs (full ingestion, real-data evaluation, deployment) are **NOT RUN** until you execute them locally. Screenshots: add yours to `docs/screenshots/` and link them here.
+SpiceBox is a GenAI-powered recipe assistant that helps you discover recipes, find meals using available ingredients, explore ingredient substitutions and analyse recipe data through natural-language conversations.
 
-## Features
-- **Discover Recipes** (Task 1): dish/ingredient/natural-language search, follow-ups ("I cannot have dairy"), recipe facts, counts/percentages/common ingredients/mean-median ingredient counts/step rankings with filters, denominator, normalisation and method shown. Unavailable data (nutrition, time, price) is refused, never invented.
-- **Cook With My Ingredients** (Task 2): hard exclusions and step limits applied *before* ranking; reproducible 4-component score; matched / missing / unused ingredients; ineligible alternatives clearly labelled; quantities never claimed verified.
-- **Ingredient Substitutions** (Task 3): evidence from similar local recipes with verified IDs, evidence class (Direct / Indirect / Weak or conflicting), full revised ingredients + instructions, predicted effects, uncertainties.
-- **Recipe Insights**: the statistics tools. Conversation context (available, excluded, step limit, preference) is always visible and editable; reset any time.
+It combines **Gemini AI, Python and SQLite** to deliver intelligent recommendations while keeping recipe retrieval, calculations and verification grounded in the actual database.
 
-## Setup (Windows PowerShell)
+<p align="center">
+
+### 🚀 [Try SpiceBox Live](https://spicebox-recipe-assistant.streamlit.app/)
+
+</p>
+
+> **Note:** The first visit may take a little longer because the hosted application may need to wake up from a cold start.
+
+## ✨ Features
+
+### 🔍 Discover Recipes
+- Search recipes using dish names, ingredients or natural language.
+- Ask for recommendations based on food preferences and cravings.
+- Refine searches through conversational follow-ups.
+- Explore recipe statistics, ingredient counts and preparation steps.
+
+### 🥗 Cook With My Ingredients
+- Find recipes using ingredients you already have.
+- Identify matched, missing and unused ingredients.
+- Apply dietary exclusions and preparation-step limits.
+- Rank recipes based on ingredient matches and preferences.
+
+### 🔄 Ingredient Substitutions
+- Explore possible ingredient alternatives.
+- Use evidence from similar recipes.
+- View updated ingredient lists and instructions.
+- Understand potential effects and limitations of substitutions.
+
+### 📊 Recipe Insights
+- Analyse ingredient frequencies.
+- Calculate recipe counts and percentages.
+- Explore average and median ingredient counts.
+- Rank recipes by preparation steps.
+
+### 🤖 AI-Powered Natural Language Understanding
+SpiceBox uses Gemini to interpret requests such as:
+
+- "I'm craving something spicy."
+- "Suggest a light meal for summer."
+- "What can I cook with potatoes and onions?"
+- "Find something vegetarian and filling."
+- "Can you suggest a quicker recipe?"
+
+The AI interprets requests, while Python and SQLite handle recipe retrieval, filtering, ranking and calculations.
+
+**AI is optional:** SpiceBox also supports rule-based recommendations without an API key.
+
+## 🛠️ Tech Stack
+
+| Technology | Purpose |
+|---|---|
+| Python | Core application logic |
+| Streamlit | Interactive web application |
+| SQLite | Recipe database |
+| Gemini API | Natural-language understanding |
+| Pandas | Not required by the application |
+| Git & GitHub | Version control and hosting |
+
+## 🧠 How It Works
+
+```text
+User's Natural Language Request
+              ↓
+       Gemini AI / Rules
+              ↓
+     Structured Search Criteria
+              ↓
+      Python + SQLite Search
+              ↓
+      Preference-Based Ranking
+              ↓
+       Relevant Recipes
 ```
-cd SpiceBox_Recipe_Assistant
+
+The LLM interprets user intent but does not invent recipes or database results. Recipe information and calculations are retrieved and processed locally.
+
+## 💻 Run Locally
+
+**Requirements:** Python 3.11+
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/SukumarBV/SpiceBox-Recipe-Assistant.git
+cd SpiceBox-Recipe-Assistant
+```
+
+### 2. Create a virtual environment
+
+**Windows PowerShell:**
+
+```powershell
 py -3.11 -m venv venv
 venv\Scripts\activate
-pip install -r requirements-dev.txt
 ```
-Put the three files from https://eightportions.com/datasets/Recipes/ into `data\raw\`: `recipes_raw_nosource_ar.json`, `recipes_raw_nosource_epi.json`, `recipes_raw_nosource_fn.json`.
+
+### 3. Install dependencies
+
+```bash
+pip install -r requirements.txt
 ```
-python scripts\inspect_dataset.py
-python scripts\build_database.py          # skips if data\processed\recipes.db exists; --force to rebuild
+
+### 4. Prepare the recipe dataset
+
+Download the Recipe Box datasets from:
+
+https://eightportions.com/datasets/Recipes/
+
+Place the following files inside `data/raw/`:
+
+- `recipes_raw_nosource_ar.json`
+- `recipes_raw_nosource_epi.json`
+- `recipes_raw_nosource_fn.json`
+
+Build the database:
+
+```bash
+python scripts/inspect_dataset.py
+python scripts/build_database.py
+```
+
+### 5. Configure Gemini (Optional)
+
+Create a `.env` file using `.env.example` and add:
+
+```env
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=your_api_key
+LLM_MODEL=your_supported_gemini_model
+LLM_MODE=assist
+```
+
+You can also run SpiceBox without an API key.
+
+### 6. Launch the application
+
+```bash
 streamlit run app.py
 ```
-**Already built the database with the previous version?** Keep `data\processed\recipes.db` — the schema and recipe IDs are unchanged; just run `streamlit run app.py`.
 
-## Optional AI (free tier)
-Copy `.env.example` to `.env` (or set environment variables / Streamlit secrets):
-- Gemini via Google AI Studio: `GEMINI_API_KEY=...` (check AI Studio for the model currently free; set `LLM_MODEL`).
-- Or any OpenAI-compatible endpoint: `LLM_PROVIDER=openai_compatible`, `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`.
-- `LLM_MODE=assist` (default; AI interprets every open-ended search/recommendation request and anything the rules are unsure about) or `always` (AI interprets every message first).
-The header shows AI on/off. Rate limits pause the AI for 60 s and the app continues deterministically. Keys are never stored in code. Not verified against a live key in this build (no key was available) — the client is tested with a fake transport.
+Open the local URL displayed in your terminal.
 
-## Natural-language pipeline (Gemini → criteria → database → ranking)
-`User message → Gemini interpretation (core/llm.py) → structured criteria (core/preferences.py `Criteria`) → SQLite-derived index retrieval (core/search.py) → preference-based ranking → recipes`.
-- Gemini only returns JSON: intent, dish, ingredients, restrictions, cuisine, meal type, descriptive **tags** (spicy, mild, light, refreshing, filling, quick, healthy, comfort, high_protein, low_carb), optional ingredient/title keyword hints and follow-up flags. It never supplies recipes, ingredients or nutrition.
-- Hints suggested by Gemini are kept only if they really occur in the database.
-- Ranking uses evidence in each recipe's **title and ingredient list** (e.g. *spicy* → chilli/jalapeno/cayenne/chipotle…; *light summer meal* → salads, cucumber, tomato, mint, minus cream/bacon/casserole titles; *filling* → substantial proteins/starches/stews; *quick* → fewer instruction steps). Every card shows the evidence found (🔎).
-- The database has **no** cuisine / meal-type / flavour / health / time labels. Cuisine and meal type are transparent **heuristics** (signature title words and ingredients) and are labelled as such. Hard preferences are relaxed only when nothing matches, and the reply says what was relaxed.
-- Follow-ups ("make it vegetarian", "something lighter", "show me more") refine the previous search. Without an API key a smaller built-in lexicon provides the same behaviour for common phrases.
+## 🧪 Testing
 
-## Tests and evaluation
+Run the automated tests:
+
+```bash
+python -m pytest -q
 ```
-python -m pytest -q                 # 38 tests on a synthetic fixture (also runs the UI with pandas blocked)
-python scripts\run_evaluation.py    # REAL data: conversations E1-E8 -> evaluation\evaluation_report.md
+
+The included test suite uses a synthetic recipe fixture. Real-dataset evaluation can be run separately:
+
+```bash
+python scripts/run_evaluation.py
 ```
-Build-environment result: 38 passed (synthetic only). Real-data evaluation: NOT RUN.
 
-## Deployment (free) — honest assessment
-Local files are not visible to the cloud, and a ~266 MB database exceeds GitHub's 100 MB per-file limit. Options:
-1. **Easiest, no risk:** the interviewer runs it locally with the steps above (≈5 minutes).
-2. **Public site (Streamlit Community Cloud):** push the code (no data) to a public GitHub repo; host `recipes.db` (ideally gzipped — compression ratio not measured) as a **GitHub Release asset** (up to 2 GB/asset) *only if the dataset licence allows redistribution — verify it yourself; nothing here asserts a licence*. In Streamlit → App → Settings → Secrets add `DB_URL = "<direct download URL>"` (+ optional `GEMINI_API_KEY`). On first start the app downloads the DB. Risks not tested here: Community Cloud memory (~1 GB class; the app loads all recipes into RAM — synthetic 123k-recipe test used ≈140 MB but real text is larger, measure locally with Task Manager) and cold-start download time.
-3. If redistribution is not allowed: do **not** upload the data; use option 1 (or a private repo, subject to current Streamlit limits).
-Steps: `git init`, `git add .`, `git commit`, create a GitHub repo, `git push`; share.streamlit.io → New app → repo/branch/`app.py` → Deploy → Secrets.
-`.gitignore` already excludes the raw JSON, the DB, `.env`, `secrets.toml`, venvs and caches.
+## ⚠️ Limitations
 
-## Explaining it in an interview
-- **Why hybrid?** Language and culinary judgement need an LLM; counts, filters and verification must be exact, so code does them.
-- **Retrieval:** title-token and ingredient-phrase search over normalised data. **Normalisation:** strip quantities/units/prep words, singularise, keep product-changing words. **Statistics:** computed on the complete filtered set, reported with denominator. **Ranking:** see `docs/architecture.md`. **Hard restrictions:** regex checks on ingredient text before ranking (not an allergy guarantee). **State:** `ConversationState` is the source of truth; the LLM only interprets. **Substitution evidence:** neighbour recipes → with/without comparison → candidates → class; AI output validated. **Unsupported claims:** refused or labelled; AI-cited IDs not in the retrieved set are discarded. **Tokens:** see architecture.
+- Nutrition, calories, exact cooking time and prices are not available as verified dataset fields.
+- Cuisine, meal-type and food-preference classifications may rely on ingredient and title-based heuristics.
+- Ingredient restrictions are text-based and are not a guarantee of allergy safety.
+- Ingredient quantities and substitution outcomes are not independently verified.
+- Recommendation quality depends on the underlying recipe data.
 
-## Troubleshooting
-- *DLL load failed … ccalendar / Application Control*: fixed — the app never imports pandas. If your own environment still errors, send the traceback; do not disable Windows security.
-- *Database not found*: run the build command; check `data\raw` filenames.
-- *Field mapping error*: create `data\field_mapping.json` as the message says.
+## 📂 Project Structure
 
-## Limitations
-Rule-based language understanding without a key; step counts depend on source line breaks; restriction checks are text-based; no photos/nutrition/times in the dataset; quantity sufficiency unverified; substitution effects are predictions; cuisine/meal/flavour/health understanding is heuristic (title + ingredient evidence); real-data performance and AI behaviour unverified here.
+```text
+SpiceBox_Recipe_Assistant/
+│
+├── app.py
+├── core/
+│   ├── llm.py
+│   ├── preferences.py
+│   ├── search.py
+│   ├── conversation.py
+│   └── database.py
+│
+├── data/
+│   ├── raw/
+│   └── processed/
+│
+├── scripts/
+│   ├── inspect_dataset.py
+│   ├── build_database.py
+│   └── run_evaluation.py
+│
+├── tests/
+├── docs/
+├── requirements.txt
+└── README.md
+```
 
-## Data attribution / AI disclosure
-Dataset: Recipe Box (Ryan Lee, eightportions.com); verify its terms before redistributing. *Disclosure template:* "I used Claude to generate and iterate on the code from the assignment; I reviewed and tested it and can explain every component. [Add what you changed.]"
+## 📚 Dataset Attribution
+
+Recipe data is sourced from **Recipe Box by Ryan Lee**:
+
+https://eightportions.com/datasets/Recipes/
+
+Please refer to the dataset provider's terms for usage and redistribution conditions.
+
+## 👩‍💻 Project
+
+**SpiceBox – AI Recipe Assistant**
+
+- **Live Application:** https://spicebox-recipe-assistant.streamlit.app/
+- **GitHub Repository:** https://github.com/SukumarBV/SpiceBox-Recipe-Assistant
+
+Built as part of a **GenAI Internship Take-Home Assignment**.
+
